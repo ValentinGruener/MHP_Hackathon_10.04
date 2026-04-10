@@ -3,3 +3,10 @@ node_modules/
 __pycache__/
 *.pyc
 venv/
+*.db
+*.sqlite
+backend/data/
+backend/uploads/
+backend/thumbnails/
+dist/
+.DS_Store
