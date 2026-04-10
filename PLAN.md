@@ -1,3 +1,4 @@
+<!-- /autoplan restore point: /Users/simonbeisiegel/.gstack/projects/ValentinGruener-MHP_Hackathon_10.04/main-autoplan-restore-20260410-153808.md -->
 # MHP PowerPoint CD-Checker & Auto-Corrector
 
 ## Problem
@@ -324,6 +325,154 @@ Correction
 - Keyboard-Navigation: Pfeiltasten für Slides, Tab durch Errors, Enter zum Fixen
 - Min. Viewport: 1024px
 - ARIA-Roles für Error-Liste und Slide-Regionen
+
+---
+
+---
+
+## Miro Board Delta — Hackathon Sprint (10.04.2025)
+
+Abgeleitet aus Miro Board "VALIde" (CI Compliance Checker). Premises bestätigt: JSON-Schema-first + Items 2-5 als MVP-Fokus.
+
+### Premise A: JSON CI Schema als Primärformat
+
+Das CI-Regelwerk wird als JSON-Datei gespeichert (nicht nur aus PPTX extrahiert). Das Schema wird im Onboarding konfiguriert und in der Template-DB als `rules`-JSON persistiert. PPTX-Template-Upload bleibt als Auto-Extraktion für den initialen Schritt.
+
+```json
+{
+  "meta": { "company": "MHP", "schema_version": "1.0", "language": "de" },
+  "branding": {
+    "colors": {
+      "primary":   ["#D5305E"],
+      "secondary": ["#FFFFFF", "#000000"],
+      "tolerance": 5
+    },
+    "fonts": {
+      "allowed": ["MHP Sans", "Arial"],
+      "title_size":  { "min": 24, "max": 36 },
+      "body_size":   { "min": 12, "max": 20 }
+    },
+    "logo": {
+      "required_on": ["first", "last"],
+      "position": "bottom-right"
+    }
+  },
+  "structure": {
+    "required_slides": [
+      { "type": "title",      "position": 1 },
+      { "type": "agenda",     "position": 2 },
+      { "type": "disclaimer", "position": "last" }
+    ],
+    "slide_limits": { "min": 5, "max": 60 }
+  },
+  "content": {
+    "language": "de",
+    "mixed_language": false,
+    "forbidden_phrases": ["TODO", "Lorem ipsum", "Text hier einfügen"]
+  },
+  "reporting": {
+    "severity_weights": { "critical": 5, "warning": 2, "info": 0 }
+  }
+}
+```
+
+### Sprint-Tasks (P1 — MVP-Fokus)
+
+| # | Task | Datei | Aufwand |
+|---|------|-------|---------|
+| 1 | **Color Tolerance**: RGB-Delta-Vergleich statt Exact-Match | `engines/rules_engine.py` | 30min |
+| 2 | **Font Size Ranges**: min/max statt exakter Werte | `engines/rules_engine.py` | 30min |
+| 3 | **Required Slides Check**: rules_engine prüft required_slides gegen Schema | `engines/rules_engine.py` | 1h |
+| 4 | **Slide Count Limits**: min/max slides aus Schema | `engines/rules_engine.py` | 20min |
+| 5 | **Logo required_on**: check first+last slide für Logo-Präsenz | `engines/rules_engine.py` | 30min |
+| 6 | **Severity Weights**: aus Schema lesen statt hardcoded | `services/check_orchestrator.py` | 20min |
+
+### Technische Spezifikation der Änderungen
+
+#### 1. Color Tolerance (rules_engine.py)
+
+```python
+def _color_distance(hex1: str, hex2: str) -> int:
+    """Manhattan distance in RGB space."""
+    r1, g1, b1 = int(hex1[0:2], 16), int(hex1[2:4], 16), int(hex1[4:6], 16)
+    r2, g2, b2 = int(hex2[0:2], 16), int(hex2[2:4], 16), int(hex2[4:6], 16)
+    return abs(r1-r2) + abs(g1-g2) + abs(b1-b2)
+
+def _is_color_allowed(rgb: str, palette: set, tolerance: int = 5) -> bool:
+    return any(_color_distance(rgb, c) <= tolerance for c in palette)
+```
+
+#### 2. Font Size Ranges (rules_engine.py)
+
+```python
+# Statt: if size_pt not in allowed_sizes:
+# Neu: ranges aus schema["branding"]["fonts"]
+title_range = rules.get("title_size", {})   # {"min": 24, "max": 36}
+body_range  = rules.get("body_size", {})    # {"min": 12, "max": 20}
+
+def _size_in_range(size_pt, range_dict) -> bool:
+    if not range_dict:
+        return True
+    return range_dict.get("min", 0) <= size_pt <= range_dict.get("max", 9999)
+```
+
+#### 3. Required Slides Check (rules_engine.py — neue Funktion)
+
+```python
+def _check_required_slides(prs, required_slides: list) -> list[dict]:
+    """Check that required slide types exist at specified positions."""
+    total = len(prs.slides)
+    errors = []
+    for req in required_slides:
+        pos = req.get("position")
+        slide_type = req.get("type")
+        if pos == "last":
+            idx = total - 1
+        elif isinstance(pos, int):
+            idx = pos - 1  # 1-indexed → 0-indexed
+        else:
+            continue
+        if idx < 0 or idx >= total:
+            errors.append(_make_error(
+                slide_number=pos if isinstance(pos, int) else total,
+                error_type="missing_required_slide",
+                severity=Severity.critical,
+                description=f'Pflicht-Slide "{slide_type}" fehlt an Position {pos}',
+                suggestion=f'Slide vom Typ "{slide_type}" an Position {pos} einfügen',
+            ))
+    return errors
+```
+
+#### 4. Slide Count Limits (rules_engine.py)
+
+```python
+slide_limits = rules.get("slide_limits", {})
+if slide_limits:
+    n = len(prs.slides)
+    if "min" in slide_limits and n < slide_limits["min"]:
+        errors.append(... "too_few_slides" ...)
+    if "max" in slide_limits and n > slide_limits["max"]:
+        errors.append(... "too_many_slides" ...)
+```
+
+#### 5. Severity Weights (check_orchestrator.py)
+
+```python
+# Statt hardcoded:
+# score = max(0, 100 - (critical_count * 5 + warning_count * 2))
+# Neu:
+weights = rules.get("severity_weights", {"critical": 5, "warning": 2, "info": 0})
+score = max(0, 100 - sum(
+    weights.get(e["severity"], 0) for e in all_errors
+))
+```
+
+### Nicht im Hackathon-MVP (deferred)
+
+- `rule_id` + `layer` + `confidence` Felder im Issue-Objekt (DB-Migration nötig, nachlagern)
+- Forbidden phrases/elements (Level 3, nach Core-MVP)
+- Language/mixed-language flag (Haiku-Engine-Erweiterung)
+- JSON Schema Editor im Admin-Panel
 
 ---
 

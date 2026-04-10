@@ -35,7 +35,18 @@ def extract_cd_rules(pptx_path: Path) -> dict:
     # Detect logo (largest image on first slide or master)
     logo_spec = _detect_logo(prs)
 
+    # Derive size ranges from observed font sizes
+    title_sizes = [s for s in font_sizes if s >= 20]
+    body_sizes  = [s for s in font_sizes if s < 20]
+    title_size_range = (
+        {"min": min(title_sizes), "max": max(title_sizes)} if title_sizes else {}
+    )
+    body_size_range = (
+        {"min": min(body_sizes), "max": max(body_sizes)} if body_sizes else {}
+    )
+
     rules = {
+        # Legacy fields (kept for backwards compat)
         "allowed_fonts": sorted(fonts),
         "allowed_font_sizes": sorted(font_sizes),
         "color_palette": sorted(colors),
@@ -43,6 +54,14 @@ def extract_cd_rules(pptx_path: Path) -> dict:
         "slide_layouts": layouts,
         "slide_width": prs.slide_width,
         "slide_height": prs.slide_height,
+        # New JSON-schema fields (Miro board spec)
+        "color_tolerance": 5,
+        "title_size": title_size_range,
+        "body_size": body_size_range,
+        "logo_required_on": ["first", "last"],
+        "required_slides": [],   # populated manually during onboarding
+        "slide_limits": {},      # populated manually during onboarding
+        "severity_weights": {"critical": 5, "warning": 2, "info": 0},
     }
 
     return rules

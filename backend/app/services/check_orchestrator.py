@@ -112,12 +112,12 @@ async def run_check(
         )
         db.add(check_result)
 
-    # Calculate score
+    # Calculate score — weights configurable via CI schema, fallback to defaults
     if total_slides > 0:
-        critical_count = sum(1 for e in all_errors if e["severity"] == "critical")
-        warning_count = sum(1 for e in all_errors if e["severity"] == "warning")
-        # Score: 100 - (criticals * 5 + warnings * 2), min 0
-        score = max(0, 100 - (critical_count * 5 + warning_count * 2))
+        weights = rules.get("severity_weights", {"critical": 5, "warning": 2, "info": 0})
+        score = max(0.0, 100.0 - sum(
+            weights.get(e["severity"], 0) for e in all_errors
+        ))
     else:
         score = 100.0
 
