@@ -1,0 +1,181 @@
+# ============================================================================
+# Corporate Document Style & Compliance Guide
+# Schema v1.0 — maschinenlesbar für den AI Compliance Checker
+# ============================================================================
+
+meta:
+  company_name: "MusterCorp GmbH"
+  schema_version: "1.0.0"
+  language: "de"
+  last_updated: "2026-04-10"
+  applies_to:
+    - pptx
+  contact: "brand-team@mustercorp.de"
+
+# ============================================================================
+# BRANDING
+# ============================================================================
+
+branding:
+  colors:
+    primary: "#003366"          # Dunkelblau — Hauptfarbe
+    secondary: "#0066AA"        # Mittelblau — Akzente, Links
+    accent: "#FF6600"           # Orange — Hervorhebungen, CTAs
+    neutral_dark: "#333333"     # Dunkelgrau — Fließtext
+    neutral_light: "#F5F5F5"    # Hellgrau — Hintergründe
+    white: "#FFFFFF"
+    forbidden_colors:
+      - "#FF0000"              # Reines Rot — nie verwenden
+      - "#00FF00"              # Neon-Grün — nie verwenden
+      - "#FFFF00"              # Neon-Gelb — nie verwenden
+    tolerance: 5               # Delta-E-Toleranz für Farbabweichungen
+
+  fonts:
+    headings:
+      allowed:
+        - "Arial"
+        - "Calibri"
+      size_min: 20
+      size_max: 44
+      weight: "bold"
+    body:
+      allowed:
+        - "Arial"
+        - "Calibri"
+      size_min: 10
+      size_max: 14
+      weight: "regular"
+    captions:
+      allowed:
+        - "Arial"
+        - "Calibri"
+      size_min: 8
+      size_max: 10
+      weight: "regular"
+    forbidden_fonts:
+      - "Comic Sans MS"
+      - "Papyrus"
+      - "Impact"
+      - "Wingdings"
+
+  logo:
+    required: true
+    position: "top-right"          # Erlaubt: top-left, top-right, bottom-left, bottom-right, center
+    allowed_variants:
+      - label: "logo_primary"      # Farbversion auf weißem Hintergrund
+      - label: "logo_white"        # Weiße Version auf dunklem Hintergrund
+      - label: "logo_icon_only"    # Nur Bildmarke (z.B. für kleine Flächen)
+    min_size_px: 80                # Mindestbreite in Pixeln
+    clear_space_factor: 1.5        # Freiraum = 1.5× Logohöhe ringsherum
+    forbidden_modifications:
+      - "stretched"
+      - "rotated"
+      - "recolored"
+      - "cropped"
+
+# ============================================================================
+# STRUKTUR — POWERPOINT
+# ============================================================================
+
+structure:
+  pptx:
+    required_slides:
+      - type: "title_slide"
+        position: "first"
+        must_contain:
+          - "company_logo"
+          - "presentation_title"
+          - "date"
+          - "author_name"
+
+      - type: "agenda_slide"
+        position: 2
+        must_contain:
+          - "agenda_items"
+
+      - type: "closing_slide"
+        position: "last"
+        must_contain:
+          - "company_logo"
+          - "contact_info"
+
+    slide_limits:
+      total_min: 5
+      total_max: 30
+      max_per_type:
+        title_slide: 1
+        agenda_slide: 1
+        closing_slide: 1
+        content_slide: 25
+        divider_slide: 5
+
+    layout_rules:
+      max_text_lines_per_slide: 8
+      max_bullet_depth: 2           # Maximal 2 Ebenen Aufzählung
+      max_words_per_slide: 80
+      min_font_size_on_slide: 14
+      image_required_alt_text: true
+      charts_require_title: true
+      charts_require_source: true
+
+    forbidden_elements:
+      - "wordart"
+      - "clip_art"
+      - "animated_transitions"      # Keine Animationen
+      - "sound_effects"
+      - "auto_play_media"
+      - "3d_effects"
+      - "gradient_fills"            # Nur Flat Design
+
+# ============================================================================
+# CONTENT REGELN
+# ============================================================================
+
+content:
+  language:
+    primary: "de"
+    allowed_secondary:
+      - "en"                        # Englische Fachbegriffe erlaubt
+    mixed_language_allowed: true
+    mixed_language_note: "Englische Fachbegriffe nur wenn kein gängiger deutscher Begriff existiert"
+
+  tone:
+    style: "formal"                 # formal | semi-formal | informal
+    perspective: "wir"              # Wir-Form bevorzugt
+    rules:
+      - "Aktiv statt Passiv bevorzugen"
+      - "Kurze Sätze (max. 25 Wörter)"
+      - "Keine Umgangssprache"
+      - "Gender-neutrale Sprache verwenden"
+      - "Keine Superlative ohne Beleg"
+
+  forbidden_phrases:
+    severity_critical:
+      - "streng geheim"             # Nur offizielle Klassifizierungen
+      - "garantiert"                # Rechtlich problematisch
+      - "100% sicher"
+      - "konkurrenzlos"
+      - "der/die/das Beste"
+    severity_warning:
+      - "meiner Meinung nach"       # Nicht in offiziellen Dokumenten
+      - "irgendwie"
+      - "eigentlich"
+      - "halt"
+      - "quasi"
+      - "sozusagen"
+      - "man"                       # Unpersönlich, besser: wir/Sie
+
+  required_disclaimers:
+    external_documents:
+      - "© {year} MusterCorp GmbH. Alle Rechte vorbehalten."
+      - "Vertraulichkeitshinweis bei Klassifizierung 'Vertraulich'"
+    presentations:
+      - "© {year} MusterCorp GmbH"
+
+  date_format: "DD.MM.YYYY"         # Deutsches Datumsformat
+  number_format:
+    decimal_separator: ","
+    thousands_separator: "."
+    currency_symbol: "€"
+    currency_position: "after"       # 1.234,56 €
+

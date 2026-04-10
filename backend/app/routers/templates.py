@@ -11,6 +11,7 @@ from app.models import Template
 from app.schemas import TemplateCreate, TemplateResponse, TemplateRulesUpdate
 from app.services.sanitize import sanitize_upload
 from app.services.template_extractor import extract_cd_rules
+from app.services.yaml_importer import yaml_to_cd_rules
 
 router = APIRouter()
 
@@ -46,6 +47,32 @@ async def upload_template(
     await db.commit()
     await db.refresh(template)
 
+    return template
+
+
+@router.post("/import-yaml", response_model=TemplateResponse)
+async def import_yaml_template(
+    name: str = Form(...),
+    department: str = Form(None),
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Import a ci_guidelines.yaml and create a template from it."""
+    content = await file.read()
+    try:
+        rules = yaml_to_cd_rules(content)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Ungültige YAML-Datei: {e}")
+
+    template = Template(
+        name=name,
+        department=department,
+        source_pptx_path="",   # no PPTX file for YAML-imported templates
+        rules=rules,
+    )
+    db.add(template)
+    await db.commit()
+    await db.refresh(template)
     return template
 
 

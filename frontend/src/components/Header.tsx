@@ -6,12 +6,9 @@ export function Header() {
   return (
     <header className="header">
       <div className="header-logo">
-        <div className="logo-mark">
-          <span className="logo-bar" />
-          <span className="logo-bar" />
-        </div>
+        <div className="logo-mark">CI</div>
         <div>
-          <h1>MHP CD-Checker</h1>
+          <h1>CI Checker</h1>
           <div className="logo-sub">Corporate Design Compliance</div>
         </div>
       </div>

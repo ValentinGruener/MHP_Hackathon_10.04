@@ -80,8 +80,11 @@ def _extract_from_shapes(shapes, fonts: set, font_sizes: set, colors: set):
                 if font.size:
                     fonts_pt = font.size.pt
                     font_sizes.add(fonts_pt)
-                if font.color and font.color.rgb:
-                    colors.add(str(font.color.rgb))
+                try:
+                    if font.color and font.color.rgb:
+                        colors.add(str(font.color.rgb))
+                except AttributeError:
+                    pass  # _NoneColor or theme colors have no .rgb
 
 
 def _extract_theme_colors(prs: Presentation) -> set:

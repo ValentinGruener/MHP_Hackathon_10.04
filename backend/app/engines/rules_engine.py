@@ -193,8 +193,12 @@ def check_rules(pptx_path: str, rules: dict) -> tuple[list[dict], float]:
                                     ))
 
                         # Color check — tolerance-based
-                        if run.font.color and run.font.color.rgb and color_palette:
-                            rgb = str(run.font.color.rgb).upper()
+                        try:
+                            _rgb_val = run.font.color.rgb if run.font.color else None
+                        except AttributeError:
+                            _rgb_val = None  # _NoneColor / theme color has no .rgb
+                        if _rgb_val and color_palette:
+                            rgb = str(_rgb_val).upper()
                             if not _is_color_allowed(rgb, color_palette, color_tolerance):
                                 closest = min(color_palette, key=lambda c: _color_distance(rgb, c))
                                 errors.append(_make_error(
