@@ -101,7 +101,7 @@ async def get_presentation(
     )
 
 
-@router.post("/{presentation_id}/check")
+@router.get("/{presentation_id}/check")
 async def start_check(
     presentation_id: int,
     db: AsyncSession = Depends(get_db),
@@ -113,6 +113,13 @@ async def start_check(
 
     if not presentation.template_id:
         raise HTTPException(status_code=400, detail="Kein Template zugeordnet")
+
+    # Prevent double-runs: if already checking or done, refuse
+    if presentation.status in (PresentationStatus.checking, PresentationStatus.done):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Prüfung bereits {'abgeschlossen' if presentation.status == PresentationStatus.done else 'läuft'}",
+        )
 
     template = await db.get(Template, presentation.template_id)
     if not template:
