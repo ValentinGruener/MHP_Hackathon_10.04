@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc -l /Users/valentingruner/MHP_Hackathon_10.04/backend/app/**/*.py /Users/valentingruner/MHP_Hackathon_10.04/frontend/src/**/*.tsx /Users/valentingruner/MHP_Hackathon_10.04/frontend/src/**/*.ts /Users/valentingruner/MHP_Hackathon_10.04/frontend/src/styles.css)",
+      "Bash(lsof -ti:8001)",
+      "Bash(xargs kill:*)",
+      "Bash(lsof -ti:3000)",
+      "Bash(npm run:*)",
+      "Bash(curl -s http://localhost:8001/api/health)",
+      "Bash(curl -s http://localhost:8001/api/templates/)"
+    ]
+  }
+}

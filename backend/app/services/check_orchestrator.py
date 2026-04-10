@@ -1,14 +1,11 @@
 import asyncio
-import json
 from typing import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from pptx import Presentation
 
 from app.models import CheckResult, Presentation as PresentationModel, PresentationStatus
-from app.engines.rules_engine import check_rules
-from app.engines.languagetool_engine import check_languagetool
-from app.engines.haiku_engine import check_haiku
+from app.engines.haiku_engine import check_pdf_with_ai
+from app.services.pdf_parser import parse_pdf
 from app.schemas import CheckProgressEvent
 
 
@@ -16,81 +13,47 @@ async def run_check(
     db: AsyncSession,
     presentation: PresentationModel,
     rules: dict,
-) -> AsyncGenerator[str, None]:
-    """Run all three check engines in parallel, yielding SSE progress events."""
-    pptx_path = presentation.original_pptx_path
+) -> AsyncGenerator[dict, None]:
+    """Parse PDF page-by-page and run AI CI compliance check, yielding SSE progress events."""
+    pdf_path = presentation.original_pptx_path
 
     # Update status
     presentation.status = PresentationStatus.checking
     await db.commit()
 
-    prs = Presentation(pptx_path)
-    total_slides = len(prs.slides)
-    presentation.slide_count = total_slides
+    # Parse PDF
+    yield _event("orchestrator", "started",
+                 message="PDF wird eingelesen und Seiten werden abfotografiert...")
+
+    try:
+        pdf_data = await asyncio.to_thread(parse_pdf, pdf_path)
+    except Exception as e:
+        presentation.status = PresentationStatus.error
+        await db.commit()
+        yield _event("orchestrator", "error", message=f"PDF konnte nicht gelesen werden: {e}")
+        return
+
+    total_pages = pdf_data["num_pages"]
+    presentation.slide_count = total_pages
     await db.commit()
 
-    yield _sse_event(CheckProgressEvent(
-        engine="orchestrator",
-        status="started",
-        total_slides=total_slides,
-        message=f"Prüfung gestartet: {total_slides} Folien",
-    ))
+    yield _event("orchestrator", "started", total_slides=total_pages,
+                 message=f"{total_pages} Seiten erkannt und abfotografiert")
 
-    all_errors = []
-    coverage = 100.0
+    # Run AI check
+    yield _event("haiku", "started", message="KI-Analyse laeuft (visuell + inhaltlich)...")
 
-    # Run all three engines in parallel
-    async def run_rules():
-        yield_event = CheckProgressEvent(engine="rules", status="started")
-        errors, cov = check_rules(pptx_path, rules)
-        return "rules", errors, cov
-
-    async def run_lt():
-        errors = await check_languagetool(pptx_path)
-        return "languagetool", errors, None
-
-    async def run_haiku():
-        errors = await check_haiku(pptx_path)
-        return "haiku", errors, None
-
-    # Yield start events
-    yield _sse_event(CheckProgressEvent(engine="rules", status="started"))
-    yield _sse_event(CheckProgressEvent(engine="languagetool", status="started"))
-    yield _sse_event(CheckProgressEvent(engine="haiku", status="started"))
-
-    # Run in parallel
-    tasks = [
-        asyncio.create_task(_wrap_engine("rules", lambda: check_rules(pptx_path, rules))),
-        asyncio.create_task(
-            _wrap_engine_async("languagetool", lambda: check_languagetool(pptx_path))
-        ),
-        asyncio.create_task(
-            _wrap_engine_async("haiku", lambda: check_haiku(pptx_path))
-        ),
-    ]
-
-    for coro in asyncio.as_completed(tasks):
-        engine_name, result, error_msg = await coro
-        if error_msg:
-            yield _sse_event(CheckProgressEvent(
-                engine=engine_name,
-                status="error",
-                message=error_msg,
-            ))
-            continue
-
-        if engine_name == "rules":
-            errors, cov = result
-            coverage = cov
-        else:
-            errors = result
-
-        all_errors.extend(errors)
-        yield _sse_event(CheckProgressEvent(
-            engine=engine_name,
-            status="completed",
-            errors_found=len(errors) if isinstance(errors, list) else len(errors[0]) if isinstance(errors, tuple) else 0,
-        ))
+    try:
+        all_errors = await check_pdf_with_ai(pdf_data, rules)
+        real_count = len([e for e in all_errors if e["error_type"] != "ci_summary"])
+        print(f"[CHECK] AI returned {real_count} errors + summary")
+        yield _event("haiku", "completed", errors_found=real_count,
+                     message=f"KI-Analyse abgeschlossen: {real_count} Fehler gefunden")
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        all_errors = []
+        yield _event("haiku", "error", message=f"KI-Analyse fehlgeschlagen: {e}")
 
     # Save all errors to DB
     for err in all_errors:
@@ -113,45 +76,29 @@ async def run_check(
         db.add(check_result)
 
     # Calculate score
-    if total_slides > 0:
-        critical_count = sum(1 for e in all_errors if e["severity"] == "critical")
-        warning_count = sum(1 for e in all_errors if e["severity"] == "warning")
-        # Score: 100 - (criticals * 5 + warnings * 2), min 0
+    real_errors = [e for e in all_errors if e["error_type"] != "ci_summary"]
+    if total_pages > 0:
+        critical_count = sum(1 for e in real_errors if e["severity"] == "critical")
+        warning_count = sum(1 for e in real_errors if e["severity"] == "warning")
         score = max(0, 100 - (critical_count * 5 + warning_count * 2))
     else:
         score = 100.0
 
     presentation.score = score
-    presentation.coverage_percent = coverage
+    presentation.coverage_percent = 100.0
     presentation.status = PresentationStatus.done
     await db.commit()
 
-    yield _sse_event(CheckProgressEvent(
-        engine="orchestrator",
-        status="completed",
-        errors_found=len(all_errors),
-        message=f"Prüfung abgeschlossen. Score: {score:.0f}%, Coverage: {coverage:.0f}%",
-    ))
+    yield _event("orchestrator", "completed", errors_found=len(real_errors),
+                 message=f"Pruefung abgeschlossen. Score: {score:.0f}%")
 
 
-async def _wrap_engine(name: str, fn):
-    """Wrap a sync engine function for parallel execution."""
-    try:
-        result = await asyncio.to_thread(fn)
-        return name, result, None
-    except Exception as e:
-        return name, None, str(e)
-
-
-async def _wrap_engine_async(name: str, fn):
-    """Wrap an async engine function for parallel execution."""
-    try:
-        result = await fn()
-        return name, result, None
-    except Exception as e:
-        return name, None, str(e)
-
-
-def _sse_event(event: CheckProgressEvent) -> str:
-    """Format an SSE event string."""
-    return f"data: {event.model_dump_json()}\n\n"
+def _event(engine: str, status: str, **kwargs) -> dict:
+    """Create an SSE event dict."""
+    return {
+        "data": CheckProgressEvent(
+            engine=engine,
+            status=status,
+            **kwargs,
+        ).model_dump_json()
+    }

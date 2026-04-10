@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import type { Template, Presentation, CheckProgress, CorrectionResult } from '../types/api';
+import type { Template, Presentation, CheckProgress } from '../types/api';
 
 const API = '/api';
 
@@ -35,7 +35,12 @@ export function useTemplates() {
     return t;
   }, []);
 
-  return { templates, loading, load, upload };
+  const remove = useCallback(async (id: number) => {
+    await fetchJson<{ detail: string }>(`${API}/templates/${id}`, { method: 'DELETE' });
+    setTemplates(prev => prev.filter(t => t.id !== id));
+  }, []);
+
+  return { templates, loading, load, upload, remove };
 }
 
 export function usePresentations() {
@@ -54,7 +59,7 @@ export function usePresentations() {
 
   const check = useCallback(async (id: number) => {
     setChecking(true);
-    setProgress({ rules: 'pending', languagetool: 'pending', haiku: 'pending' });
+    setProgress({ haiku: 'pending' });
 
     return new Promise<void>((resolve, reject) => {
       const es = new EventSource(`${API}/presentations/${id}/check`);
@@ -62,6 +67,7 @@ export function usePresentations() {
       es.onmessage = (event) => {
         try {
           const data: CheckProgress = JSON.parse(event.data);
+          console.log('[SSE]', data);
 
           if (data.engine !== 'orchestrator') {
             setProgress(prev => ({
@@ -74,38 +80,38 @@ export function usePresentations() {
           if (data.engine === 'orchestrator' && data.status === 'completed') {
             es.close();
             setChecking(false);
-            // Reload full results
             fetchJson<Presentation>(`${API}/presentations/${id}`).then(p => {
               setPresentation(p);
               resolve();
             });
           }
-        } catch {}
+
+          if (data.engine === 'orchestrator' && data.status === 'error') {
+            es.close();
+            setChecking(false);
+            reject(new Error(data.message || 'Pruefung fehlgeschlagen'));
+          }
+        } catch (err) {
+          console.error('[SSE parse error]', err, event.data);
+        }
       };
 
-      es.onerror = () => {
-        es.close();
-        setChecking(false);
-        // Try loading results anyway
-        fetchJson<Presentation>(`${API}/presentations/${id}`).then(p => {
-          setPresentation(p);
-          resolve();
-        }).catch(reject);
+      es.onerror = (err) => {
+        console.error('[SSE error]', err);
+        // Don't close immediately — SSE reconnects automatically
+        // Only close after a timeout
+        setTimeout(() => {
+          if (es.readyState === EventSource.CLOSED) return;
+          es.close();
+          setChecking(false);
+          fetchJson<Presentation>(`${API}/presentations/${id}`).then(p => {
+            setPresentation(p);
+            resolve();
+          }).catch(reject);
+        }, 3000);
       };
     });
   }, []);
 
-  const correct = useCallback(async (id: number, resultIds: number[]) => {
-    const result = await fetchJson<CorrectionResult>(`${API}/presentations/${id}/correct`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ check_result_ids: resultIds }),
-    });
-    // Reload presentation
-    const p = await fetchJson<Presentation>(`${API}/presentations/${id}`);
-    setPresentation(p);
-    return result;
-  }, []);
-
-  return { presentation, checking, progress, upload, check, correct, setPresentation };
+  return { presentation, checking, progress, upload, check, setPresentation };
 }

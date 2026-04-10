@@ -39,7 +39,7 @@ class Template(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String, nullable=False)
     department = Column(String, nullable=True)
-    source_pptx_path = Column(String, nullable=False)
+    source_pptx_path = Column(String, nullable=True)
     rules = Column(JSON, nullable=False, default=dict)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

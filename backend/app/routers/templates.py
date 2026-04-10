@@ -1,6 +1,7 @@
 import uuid
 from pathlib import Path
 
+import yaml
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,26 +23,59 @@ async def upload_template(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
 ):
-    """Upload a CD template PPTX and extract rules automatically."""
-    file_id = uuid.uuid4().hex
-    dest_path = settings.upload_dir / "templates" / f"{file_id}.pptx"
+    """Upload a CD template — accepts YAML (.yaml/.yml) or PPTX (.pptx)."""
+    filename = file.filename or ""
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
 
-    await sanitize_upload(
-        file,
-        dest_path,
-        max_size_mb=settings.max_file_size_mb,
-        max_decompress_ratio=settings.max_decompress_ratio,
-    )
+    if ext in ("yaml", "yml"):
+        # YAML upload — parse and store rules directly
+        content = await file.read()
+        try:
+            rules = yaml.safe_load(content)
+        except yaml.YAMLError as e:
+            raise HTTPException(status_code=400, detail=f"Ungueltige YAML-Datei: {e}")
 
-    # Extract CD rules from the template
-    rules = extract_cd_rules(dest_path)
+        if not isinstance(rules, dict):
+            raise HTTPException(status_code=400, detail="YAML muss ein Objekt/Dictionary sein")
 
-    template = Template(
-        name=name,
-        department=department,
-        source_pptx_path=str(dest_path),
-        rules=rules,
-    )
+        # Save YAML file to disk
+        yaml_dir = settings.upload_dir / "templates"
+        yaml_dir.mkdir(parents=True, exist_ok=True)
+        file_id = uuid.uuid4().hex
+        yaml_path = yaml_dir / f"{file_id}.yaml"
+        yaml_path.write_bytes(content)
+
+        template = Template(
+            name=name,
+            department=department,
+            source_pptx_path=str(yaml_path),
+            rules=rules,
+        )
+
+    elif ext == "pptx":
+        # Legacy PPTX upload
+        file_id = uuid.uuid4().hex
+        dest_path = settings.upload_dir / "templates" / f"{file_id}.pptx"
+
+        await sanitize_upload(
+            file,
+            dest_path,
+            max_size_mb=settings.max_file_size_mb,
+            max_decompress_ratio=settings.max_decompress_ratio,
+        )
+
+        rules = extract_cd_rules(dest_path)
+
+        template = Template(
+            name=name,
+            department=department,
+            source_pptx_path=str(dest_path),
+            rules=rules,
+        )
+
+    else:
+        raise HTTPException(status_code=400, detail="Nur YAML (.yaml/.yml) oder PPTX (.pptx) Dateien erlaubt")
+
     db.add(template)
     await db.commit()
     await db.refresh(template)
@@ -84,3 +118,21 @@ async def update_rules(
     await db.commit()
     await db.refresh(template)
     return template
+
+
+@router.delete("/{template_id}", response_model=dict)
+async def delete_template(template_id: int, db: AsyncSession = Depends(get_db)):
+    """Delete a CD template."""
+    template = await db.get(Template, template_id)
+    if not template:
+        raise HTTPException(status_code=404, detail="Template nicht gefunden")
+
+    # Delete source file if exists
+    if template.source_pptx_path:
+        p = Path(template.source_pptx_path)
+        if p.exists():
+            p.unlink()
+
+    await db.delete(template)
+    await db.commit()
+    return {"detail": "Template geloescht"}

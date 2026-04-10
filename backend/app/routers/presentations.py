@@ -2,7 +2,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
@@ -19,12 +19,9 @@ from app.schemas import (
     PresentationResponse,
     PresentationDetailResponse,
     CheckResultResponse,
-    CorrectionRequest,
-    CorrectionResponse,
 )
-from app.services.sanitize import sanitize_upload
 from app.services.check_orchestrator import run_check
-from app.services.correction_engine import apply_corrections
+from app.services.pdf_parser import parse_pdf
 
 router = APIRouter()
 
@@ -35,22 +32,28 @@ async def upload_presentation(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
 ):
-    """Upload a PPTX presentation for checking."""
+    """Upload a PDF document for CI checking."""
     # Verify template exists
     template = await db.get(Template, template_id)
     if not template:
         raise HTTPException(status_code=404, detail="Template nicht gefunden")
 
-    file_id = uuid.uuid4().hex
-    filename = file.filename or "unknown.pptx"
-    dest_path = settings.upload_dir / "presentations" / f"{file_id}.pptx"
+    filename = file.filename or "unknown.pdf"
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
 
-    await sanitize_upload(
-        file,
-        dest_path,
-        max_size_mb=settings.max_file_size_mb,
-        max_decompress_ratio=settings.max_decompress_ratio,
-    )
+    if ext != "pdf":
+        raise HTTPException(status_code=400, detail="Nur PDF-Dateien erlaubt")
+
+    # Read and save file
+    content = await file.read()
+    if len(content) > settings.max_file_size_mb * 1024 * 1024:
+        raise HTTPException(status_code=400, detail=f"Datei zu gross (max {settings.max_file_size_mb} MB)")
+
+    file_id = uuid.uuid4().hex
+    upload_dir = settings.upload_dir / "presentations"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    dest_path = upload_dir / f"{file_id}.pdf"
+    dest_path.write_bytes(content)
 
     presentation = Presentation(
         template_id=template_id,
@@ -73,7 +76,7 @@ async def get_presentation(
     """Get presentation details with check results."""
     presentation = await db.get(Presentation, presentation_id)
     if not presentation:
-        raise HTTPException(status_code=404, detail="Präsentation nicht gefunden")
+        raise HTTPException(status_code=404, detail="Dokument nicht gefunden")
 
     result = await db.execute(
         select(CheckResult)
@@ -82,7 +85,6 @@ async def get_presentation(
     )
     check_results = result.scalars().all()
 
-    # Count errors by severity
     error_counts = {"critical": 0, "warning": 0, "info": 0}
     for cr in check_results:
         error_counts[cr.severity.value] += 1
@@ -101,15 +103,15 @@ async def get_presentation(
     )
 
 
-@router.post("/{presentation_id}/check")
+@router.get("/{presentation_id}/check")
 async def start_check(
     presentation_id: int,
     db: AsyncSession = Depends(get_db),
 ):
-    """Start checking a presentation. Returns SSE stream with progress."""
+    """Start checking a document. Returns SSE stream with progress."""
     presentation = await db.get(Presentation, presentation_id)
     if not presentation:
-        raise HTTPException(status_code=404, detail="Präsentation nicht gefunden")
+        raise HTTPException(status_code=404, detail="Dokument nicht gefunden")
 
     if not presentation.template_id:
         raise HTTPException(status_code=400, detail="Kein Template zugeordnet")
@@ -130,10 +132,10 @@ async def get_results(
     presentation_id: int,
     db: AsyncSession = Depends(get_db),
 ):
-    """Get check results for a presentation."""
+    """Get check results for a document."""
     presentation = await db.get(Presentation, presentation_id)
     if not presentation:
-        raise HTTPException(status_code=404, detail="Präsentation nicht gefunden")
+        raise HTTPException(status_code=404, detail="Dokument nicht gefunden")
 
     result = await db.execute(
         select(CheckResult)
@@ -143,65 +145,15 @@ async def get_results(
     return result.scalars().all()
 
 
-@router.post("/{presentation_id}/correct")
-async def correct_presentation(
-    presentation_id: int,
-    request: CorrectionRequest,
-    db: AsyncSession = Depends(get_db),
-):
-    """Apply selected corrections to the presentation."""
-    presentation = await db.get(Presentation, presentation_id)
-    if not presentation:
-        raise HTTPException(status_code=404, detail="Präsentation nicht gefunden")
-
-    corrections = await apply_corrections(db, presentation, request.check_result_ids)
-
-    applied = sum(1 for c in corrections if c["status"] == "applied")
-    failed = sum(1 for c in corrections if c["status"] == "failed")
-
-    return {
-        "corrections": corrections,
-        "summary": {
-            "total": len(corrections),
-            "applied": applied,
-            "failed": failed,
-        },
-    }
-
-
-@router.get("/{presentation_id}/download")
-async def download_corrected(
-    presentation_id: int,
-    db: AsyncSession = Depends(get_db),
-):
-    """Download the corrected PPTX file."""
-    presentation = await db.get(Presentation, presentation_id)
-    if not presentation:
-        raise HTTPException(status_code=404, detail="Präsentation nicht gefunden")
-
-    path = presentation.corrected_pptx_path
-    if not path or not Path(path).exists():
-        raise HTTPException(
-            status_code=404,
-            detail="Keine korrigierte Version verfügbar. Bitte zuerst Korrekturen anwenden.",
-        )
-
-    return FileResponse(
-        path=path,
-        filename=f"korrigiert_{presentation.filename}",
-        media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    )
-
-
 @router.get("/{presentation_id}/original")
 async def download_original(
     presentation_id: int,
     db: AsyncSession = Depends(get_db),
 ):
-    """Download the original PPTX file."""
+    """Download the original PDF file."""
     presentation = await db.get(Presentation, presentation_id)
     if not presentation:
-        raise HTTPException(status_code=404, detail="Präsentation nicht gefunden")
+        raise HTTPException(status_code=404, detail="Dokument nicht gefunden")
 
     path = presentation.original_pptx_path
     if not path or not Path(path).exists():
@@ -210,5 +162,36 @@ async def download_original(
     return FileResponse(
         path=path,
         filename=presentation.filename,
-        media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        media_type="application/pdf",
     )
+
+
+@router.get("/{presentation_id}/pages")
+async def get_pages(
+    presentation_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get PDF pages as base64 images for the viewer."""
+    presentation = await db.get(Presentation, presentation_id)
+    if not presentation:
+        raise HTTPException(status_code=404, detail="Dokument nicht gefunden")
+
+    path = presentation.original_pptx_path
+    if not path or not Path(path).exists():
+        raise HTTPException(status_code=404, detail="PDF nicht gefunden")
+
+    import asyncio
+    pdf_data = await asyncio.to_thread(parse_pdf, path, 200)
+
+    return {
+        "num_pages": pdf_data["num_pages"],
+        "pages": [
+            {
+                "page_number": p["page_number"],
+                "image_base64": p["image_base64"],
+                "width": p["width"],
+                "height": p["height"],
+            }
+            for p in pdf_data["pages"]
+        ],
+    }

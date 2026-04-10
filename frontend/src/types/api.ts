@@ -7,11 +7,8 @@ export interface Template {
 }
 
 export interface TemplateRules {
-  allowed_fonts: string[];
-  allowed_font_sizes: number[];
-  color_palette: string[];
-  logo_position: { x: number; y: number; w: number; h: number } | null;
-  slide_layouts: string[];
+  // YAML-based rules (flexible structure)
+  [key: string]: any;
 }
 
 export interface Presentation {

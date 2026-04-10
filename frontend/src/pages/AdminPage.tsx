@@ -3,7 +3,7 @@ import { UploadZone } from '../components/UploadZone';
 import { useTemplates } from '../hooks/useApi';
 
 export function AdminPage() {
-  const { templates, loading, load, upload } = useTemplates();
+  const { templates, loading, load, upload, remove } = useTemplates();
   const [uploading, setUploading] = useState(false);
   const [name, setName] = useState('');
   const [department, setDepartment] = useState('');
@@ -11,12 +11,13 @@ export function AdminPage() {
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [selectedTemplate, setSelectedTemplate] = useState<number | null>(null);
 
   useEffect(() => { load(); }, [load]);
 
   const handleFile = (file: File) => {
     setPendingFile(file);
-    setName(file.name.replace('.pptx', ''));
+    setName(file.name.replace(/\.(yaml|yml)$/i, ''));
     setShowForm(true);
     setError(null);
   };
@@ -39,21 +40,36 @@ export function AdminPage() {
     }
   };
 
+  const handleDelete = async (id: number) => {
+    if (!confirm('Template wirklich loeschen?')) return;
+    try {
+      await remove(id);
+      setSuccess('Template geloescht');
+      setSelectedTemplate(null);
+    } catch (e: any) {
+      setError(e.message || 'Loeschen fehlgeschlagen');
+    }
+  };
+
+  const selectedTpl = templates.find(t => t.id === selectedTemplate);
+
   return (
     <div>
       <div className="page-header">
         <h2>CD-Templates verwalten</h2>
-        <p>Corporate Design Vorlagen hochladen und Regeln konfigurieren</p>
+        <p>CI/CD-Vorlagen als YAML hochladen und Regeln konfigurieren</p>
       </div>
 
       {error && (
         <div className="alert alert-error">
           <span>&#9888;</span> {error}
+          <button onClick={() => setError(null)} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: 'inherit', cursor: 'pointer' }}>&#10005;</button>
         </div>
       )}
       {success && (
         <div className="alert alert-success">
           <span>&#10004;</span> {success}
+          <button onClick={() => setSuccess(null)} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: 'inherit', cursor: 'pointer' }}>&#10005;</button>
         </div>
       )}
 
@@ -61,14 +77,15 @@ export function AdminPage() {
       <div className="card" style={{ marginBottom: 'var(--space-xl)' }}>
         <div className="card-header">
           <h2>Neues Template hochladen</h2>
-          <p>PPTX-Vorlage hochladen, CD-Regeln werden automatisch extrahiert</p>
+          <p>YAML-Vorlage mit CI-Regeln hochladen</p>
         </div>
         <div className="card-body">
           {!showForm ? (
             <UploadZone
               onFile={handleFile}
-              label="Master-PPTX hochladen"
-              sublabel="CD-Vorlage als Referenz für Prüfungen"
+              accept=".yaml,.yml"
+              label="YAML-Vorlage hochladen"
+              sublabel="CI-Guideline als .yaml oder .yml Datei"
             />
           ) : (
             <div style={{ maxWidth: '400px' }}>
@@ -83,7 +100,7 @@ export function AdminPage() {
                   type="text"
                   value={name}
                   onChange={e => setName(e.target.value)}
-                  placeholder="z.B. MHP Standard 2024"
+                  placeholder="z.B. PPTX Praesentation"
                 />
               </div>
               <div style={{ marginBottom: 'var(--space-lg)' }}>
@@ -126,35 +143,57 @@ export function AdminPage() {
           ) : (
             <div className="template-grid">
               {templates.map(t => (
-                <div key={t.id} className="template-card">
+                <div
+                  key={t.id}
+                  className={`template-card ${selectedTemplate === t.id ? 'selected' : ''}`}
+                  onClick={() => setSelectedTemplate(selectedTemplate === t.id ? null : t.id)}
+                >
                   <h3>{t.name}</h3>
                   {t.department && <div className="template-meta">{t.department}</div>}
                   <div className="template-meta" style={{ marginTop: 'var(--space-xs)' }}>
                     Erstellt: {new Date(t.created_at).toLocaleDateString('de-DE')}
                   </div>
-                  <div className="template-rules">
-                    {t.rules.allowed_fonts?.slice(0, 3).map(f => (
-                      <span key={f} className="rule-tag">{f}</span>
-                    ))}
-                    {t.rules.color_palette?.slice(0, 4).map(c => (
-                      <span key={c} className="rule-tag" style={{
-                        display: 'inline-flex', alignItems: 'center', gap: '4px'
-                      }}>
-                        <span style={{
-                          width: '10px', height: '10px', borderRadius: '2px',
-                          background: `#${c}`, display: 'inline-block',
-                          border: '1px solid rgba(0,0,0,0.1)',
-                        }} />
-                        #{c}
-                      </span>
-                    ))}
-                  </div>
+                  {selectedTemplate === t.id && (
+                    <div style={{ marginTop: 'var(--space-md)', display: 'flex', gap: 'var(--space-sm)' }}>
+                      <button
+                        className="btn btn-secondary"
+                        style={{ fontSize: '12px', padding: '6px 12px' }}
+                        onClick={(e) => { e.stopPropagation(); handleDelete(t.id); }}
+                      >
+                        Loeschen
+                      </button>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
           )}
         </div>
       </div>
+
+      {/* YAML Preview */}
+      {selectedTpl && (
+        <div className="card" style={{ marginTop: 'var(--space-xl)' }}>
+          <div className="card-header">
+            <h2>Vorlage: {selectedTpl.name}</h2>
+          </div>
+          <div className="card-body">
+            <pre style={{
+              background: 'var(--mhp-dark)',
+              padding: 'var(--space-lg)',
+              borderRadius: 'var(--radius-md)',
+              overflow: 'auto',
+              maxHeight: '500px',
+              fontSize: '12px',
+              lineHeight: '1.6',
+              color: 'var(--text-secondary)',
+              fontFamily: "'SF Mono', 'JetBrains Mono', monospace",
+            }}>
+              {JSON.stringify(selectedTpl.rules, null, 2)}
+            </pre>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
